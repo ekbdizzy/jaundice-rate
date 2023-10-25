@@ -1,12 +1,15 @@
 import asyncio
-import time
-from enum import Enum
-import os
-import logging
+import json
 from contextlib import asynccontextmanager
+from enum import Enum
+import functools
+import logging
+import os
+import time
 
 import aiofiles
 import aiohttp
+from aiohttp import web
 import anyio
 from async_timeout import timeout
 import pymorphy2
@@ -107,14 +110,18 @@ async def fetch(session, url):
         return await response.text()
 
 
-async def main():
+async def index(morph, request):
+
+    urls = request.query.get("urls", "").split(",")
     articles_scoring = []
     charged_words = await parse_charged_dicts('charged_dict')
     async with aiohttp.ClientSession() as session:
         async with anyio.create_task_group() as tg:
-            for url in TEST_ARTICLES:
+            for url in urls:
                 tg.start_soon(process_article, session, morph, charged_words, url, articles_scoring)
-    print(articles_scoring)
+
+    return web.json_response({"urls": articles_scoring},
+                             dumps=functools.partial(json.dumps, ensure_ascii=False))
 
 
 if __name__ == '__main__':
@@ -123,4 +130,10 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.DEBUG)
 
     morph = pymorphy2.MorphAnalyzer()
-    asyncio.run(main())
+
+    app = web.Application()
+    app.add_routes([
+        web.get('/', functools.partial(index, morph)),
+    ])
+
+    web.run_app(app)
