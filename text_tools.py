@@ -11,13 +11,20 @@ import aiohttp
 import pytest
 import pymorphy2
 
+import settings
 from adapters import ArticleNotFound
 from adapters.inosmi_ru import sanitize
-from settings import FETCH_TIMEOUT, MORPH_TIMEOUT
+from settings import FETCH_TIMEOUT, MORPH_TIMEOUT, CHARGED_DICT_FOLDER
 
 pytest_plugins = ('pytest_asyncio',)
 
 logger = logging.getLogger('root')
+
+class ProcessingStatus(Enum):
+    OK = 'OK'
+    FETCH_ERROR = 'FETCH_ERROR'
+    PARSING_ERROR = 'PARSING_ERROR'
+    TIMEOUT = "TIMEOUT"
 
 
 def _clean_word(word):
@@ -78,13 +85,6 @@ async def log_timing(*args, **kwargs):
         logger.info(f"Анализ закончен за {time.monotonic() - now} сек")
 
 
-class ProcessingStatus(Enum):
-    OK = 'OK'
-    FETCH_ERROR = 'FETCH_ERROR'
-    PARSING_ERROR = 'PARSING_ERROR'
-    TIMEOUT = "TIMEOUT"
-
-
 async def fetch(session, url):
     async with session.get(url) as response:
         response.raise_for_status()
@@ -106,12 +106,15 @@ async def process_article(session: aiohttp.ClientSession,
                           morph: pymorphy2.MorphAnalyzer,
                           charged_words: list[str],
                           url: str,
-                          results: list[dict]):
+                          results: list[dict],
+                          fetch_timeout=FETCH_TIMEOUT,
+                          morph_timeout=MORPH_TIMEOUT,
+                          ):
     try:
-        async with timeout(FETCH_TIMEOUT):
+        async with timeout(fetch_timeout):
             html = await fetch(session, url)
 
-        async with timeout(MORPH_TIMEOUT):
+        async with timeout(morph_timeout):
             async with log_timing():
                 splitted_text = await split_by_words(morph, sanitize(html))
 
@@ -144,3 +147,43 @@ async def process_article(session: aiohttp.ClientSession,
             'Статус': ProcessingStatus.TIMEOUT.value,
             'Слов в статье': None
         })
+
+
+@pytest.mark.asyncio
+async def test_process_article():
+    morph = pymorphy2.MorphAnalyzer()
+    charged_words = parse_charged_dicts(CHARGED_DICT_FOLDER)
+
+    async with aiohttp.ClientSession() as session:
+
+        # URL does not exists
+        does_not_exists_url = "https://inosmi.ru/not/exist.html"
+        results = []
+        await process_article(session, morph, charged_words, does_not_exists_url, results)
+        assert results[0]["Статус"] == ProcessingStatus.FETCH_ERROR.value
+
+        # Incorrect adapter
+        incorrect_adapter_url = "https://google.com"
+        results = []
+        await process_article(session, morph, charged_words, incorrect_adapter_url, results)
+        assert results[0]["Статус"] == ProcessingStatus.PARSING_ERROR.value
+
+        # Correct url
+        correct_url = "https://inosmi.ru/20231014/solntse-266120679.html"
+        correct_answer = {
+            "URL": "https://inosmi.ru/20231014/solntse-266120679.html",
+            "Рейтинг": 1.12,
+            "Статус": "OK",
+            "Слов в статье": 805
+        }
+        results = []
+        await process_article(session, morph, charged_words, correct_url, results)
+        assert results[0] == correct_answer
+
+        results = []
+        await process_article(session, morph, charged_words, correct_url, results, fetch_timeout=0.1)
+        assert results[0]["Статус"] == ProcessingStatus.TIMEOUT.value
+
+        results = []
+        await process_article(session, morph, charged_words, correct_url, results, morph_timeout=0.1)
+        assert results[0]["Статус"] == ProcessingStatus.TIMEOUT.value

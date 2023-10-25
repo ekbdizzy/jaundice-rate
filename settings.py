@@ -2,6 +2,8 @@ FETCH_TIMEOUT = 5
 MORPH_TIMEOUT = 5
 MAX_URLS_IN_QUERY = 10
 
+CHARGED_DICT_FOLDER = 'charged_dict'
+
 TEST_ARTICLES = [
     "https://inosmi.ru/not/exist.html",
     "https://lenta.ru/brief/2021/08/26/afg_terror/",
