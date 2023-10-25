@@ -180,10 +180,12 @@ async def test_process_article():
         await process_article(session, morph, charged_words, correct_url, results)
         assert results[0] == correct_answer
 
+        # Fetch timeout error
         results = []
         await process_article(session, morph, charged_words, correct_url, results, fetch_timeout=0.1)
         assert results[0]["Статус"] == ProcessingStatus.TIMEOUT.value
 
+        # Morph timeout error
         results = []
         await process_article(session, morph, charged_words, correct_url, results, morph_timeout=0.1)
         assert results[0]["Статус"] == ProcessingStatus.TIMEOUT.value
