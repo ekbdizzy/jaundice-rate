@@ -1,6 +1,9 @@
 import asyncio
+import time
 from enum import Enum
 import os
+import logging
+from contextlib import asynccontextmanager
 
 import aiofiles
 import aiohttp
@@ -12,7 +15,8 @@ from adapters.inosmi_ru import sanitize
 from adapters.exceptions import ArticleNotFound
 from text_tools import split_by_words, calculate_jaundice_rate
 
-TIMEOUT = 5
+FETCH_TIMEOUT = 5
+MORPH_TIMEOUT = 5
 
 TEST_ARTICLES = [
     "https://inosmi.ru/not/exist.html",
@@ -23,6 +27,16 @@ TEST_ARTICLES = [
     "https://inosmi.ru/20231009/lunatizm-265977298.html",
     "https://inosmi.ru/20231024/seks-266274274.html",
 ]
+
+
+@asynccontextmanager
+async def log_timing(*args, **kwargs):
+    now = time.monotonic()
+    try:
+        yield
+    finally:
+        logger.info(f"Анализ закончен за {time.monotonic() - now} сек")
+
 
 
 class ProcessingStatus(Enum):
@@ -49,11 +63,15 @@ async def process_article(session: aiohttp.ClientSession,
                           url: str,
                           results: list[dict]):
     try:
-        async with timeout(TIMEOUT):
+        async with timeout(FETCH_TIMEOUT):
             html = await fetch(session, url)
 
-        splitted_text = split_by_words(morph, sanitize(html))
+        async with timeout(MORPH_TIMEOUT):
+            async with log_timing():
+                splitted_text = await split_by_words(morph, sanitize(html))
+
         score = calculate_jaundice_rate(splitted_text, charged_words)
+
         results.append({
             'URL': url,
             'Рейтинг': score,
@@ -100,5 +118,9 @@ async def main():
 
 
 if __name__ == '__main__':
+
+    logger = logging.getLogger("root")
+    logging.basicConfig(level=logging.DEBUG)
+
     morph = pymorphy2.MorphAnalyzer()
     asyncio.run(main())
